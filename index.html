@@ -15,7 +15,7 @@
 <body>
 
 <header id="app-header">
-  <h1>画箋堂 勤怠</h1>
+  <h1 id="app-title">画箋堂 勤怠</h1>
   <span id="header-sub"></span>
 </header>
 
@@ -44,7 +44,7 @@
   <form id="form-login" class="card" autocomplete="off">
     <h2>ログイン</h2>
     <label>従業員番号<input id="login-staff" inputmode="numeric" pattern="[0-9]*" maxlength="10" required></label>
-    <label>PIN<input id="login-pin" type="password" inputmode="numeric" maxlength="12" required></label>
+    <label>PIN<input id="login-pin" type="password" inputmode="numeric" maxlength="12" autocomplete="off" required></label>
     <button class="btn btn-primary btn-lg" type="submit">ログイン</button>
     <button class="btn btn-ghost" type="button" data-goto="start">戻る</button>
   </form>
@@ -66,9 +66,9 @@
   <form id="form-pin" class="card" autocomplete="off">
     <h2>PIN の変更</h2>
     <p id="pin-lead" class="muted"></p>
-    <label>今の PIN<input id="pin-current" type="password" inputmode="numeric" maxlength="12" required></label>
-    <label>新しい PIN（4〜12桁の数字）<input id="pin-new" type="password" inputmode="numeric" maxlength="12" required></label>
-    <label>新しい PIN（もう一度）<input id="pin-new2" type="password" inputmode="numeric" maxlength="12" required></label>
+    <label>今の PIN<input id="pin-current" type="password" inputmode="numeric" maxlength="12" autocomplete="off" required></label>
+    <label>新しい PIN（4〜12桁の数字）<input id="pin-new" type="password" inputmode="numeric" maxlength="12" autocomplete="off" required></label>
+    <label>新しい PIN（もう一度）<input id="pin-new2" type="password" inputmode="numeric" maxlength="12" autocomplete="off" required></label>
     <button class="btn btn-primary btn-lg" type="submit">変更する</button>
     <button id="pin-cancel" class="btn btn-ghost" type="button">やめる</button>
   </form>
@@ -125,7 +125,7 @@
 <section id="view-shared-pin" class="view" hidden>
   <form id="form-shared-pin" class="card" autocomplete="off">
     <h2 id="shared-pin-name"></h2>
-    <label>PIN<input id="shared-pin" type="password" inputmode="numeric" maxlength="12" required></label>
+    <label>PIN<input id="shared-pin" type="password" inputmode="numeric" maxlength="12" autocomplete="off" required></label>
     <button class="btn btn-primary btn-lg" type="submit">次へ</button>
     <button class="btn btn-ghost" type="button" data-goto="shared">戻る</button>
   </form>
@@ -144,6 +144,17 @@
 
 <div id="spinner" class="spinner" hidden><div class="spinner-dot"></div><p id="spinner-text">通信しています…</p></div>
 <div id="toast" class="toast" hidden></div>
+
+<!-- 時間の表示（隠しスイッチ: 題名を3秒以内に5回押す。§13.6 v1.39）。段階の名前・ミリ秒・ホスト名だけを出す -->
+<div id="timing-panel" class="timing-panel" hidden>
+  <div class="timing-head">
+    <strong>時間の表示</strong>
+    <button id="timing-copy" class="btn btn-ghost" type="button">コピー</button>
+    <button id="timing-clear" class="btn btn-ghost" type="button">消す</button>
+    <button id="timing-close" class="btn btn-ghost" type="button">閉じる</button>
+  </div>
+  <pre id="timing-lines"></pre>
+</div>
 
 <script src="js/config.js"></script>
 <script src="js/api.js"></script>

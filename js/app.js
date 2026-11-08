@@ -48,6 +48,130 @@ function timingLog(label, ms) {
     console.info('[kintai-timing] ' + label + ' ' + Object.keys(ms).map((k) => k + '=' + Math.round(ms[k]) + 'ms').join(' '));
   } catch (e) { /* コンソールが無い端末では何もしない */ }
 }
+
+// ---------------------------------------------------------------
+// 時間の表示（隠しスイッチ。§13.6 v1.39）
+// iPhone のホーム画面のアプリではコンソールが見られないので、画面の下に直近の時間を出す。
+// 題名を3秒以内に5回押すと入り切りする。出すのは段階の名前・ミリ秒・ホスト名・キャッシュかどうかだけ
+// （座標・従業員番号・PIN・トークン・氏名・URL のパスとクエリは出さない）
+// ---------------------------------------------------------------
+const TIMING_MAX = 20;      // 残す行の数
+const TIMING_TAPS = 5;      // 入り切りに要る押す回数
+const TIMING_TAP_MS = 3000; // その回数を押す時間（ミリ秒）
+/**
+ * 操作名（API の名前）→ 表示の名前
+ * 公開リポジトリの混入チェック（名前に pin を含むキーへの文字列の代入を止める）に当たらないよう、[名前, 表示] の組で書く
+ */
+const TIMING_NAMES = new Map([
+  ['getMe', '状態の取得'], ['loginPersonal', 'ログイン'], ['changePin', 'PIN の変更'], ['punch', '打刻'], ['consentGeo', '位置の同意'],
+  ['listStaffForShared', '名前の一覧'], ['registerSharedDevice', '端末の登録'], ['logout', 'ログアウト']
+]);
+
+function timingOn() { return Store.get('timingPanel') === '1'; }
+/** Performance API が使えるか（無い端末では何も出さずに動く） */
+function perfOk() { return typeof performance !== 'undefined' && typeof performance.now === 'function' && typeof performance.getEntriesByType === 'function'; }
+const pad2 = (n) => String(n).padStart(2, '0');
+/** 端末の時刻 'H:mm:ss'（サーバーの計測の at とつき合わせるため） */
+function clockText() { const d = new Date(); return d.getHours() + ':' + pad2(d.getMinutes()) + ':' + pad2(d.getSeconds()); }
+/** URL のホスト名だけ（パスとクエリは出さない。スタッフ用 API の URL の中の ID を出さないため） */
+function hostOf(url) { try { return new URL(url, location.href).host; } catch (e) { return '?'; } }
+/** URL の最後のファイル名だけ（同じ生成元のページの部品に使う） */
+function fileOf(url) { try { return new URL(url, location.href).pathname.split('/').pop() || '/'; } catch (e) { return '?'; } }
+const msOf = (v) => Math.max(0, Math.round(v));
+
+/**
+ * Performance API の1件（navigation か resource）の内訳
+ * 別の生成元で Timing-Allow-Origin の見出しが無いと、ブラウザは内訳を 0 にして隠す。そのときは全体だけ出す
+ */
+function timingDetail(e) {
+  const parts = ['全体=' + msOf(e.responseEnd - e.startTime) + 'ms'];
+  if (e.requestStart === 0 && e.responseStart === 0) {
+    parts.push('内訳=取れない（別の生成元）');
+    return parts.join(' ');
+  }
+  if (e.redirectEnd > 0) parts.push('転送=' + msOf(e.redirectEnd - e.redirectStart) + 'ms');
+  parts.push('DNS=' + msOf(e.domainLookupEnd - e.domainLookupStart) + 'ms');
+  parts.push('接続=' + msOf(e.connectEnd - e.connectStart) + 'ms');
+  parts.push('TLS=' + (e.secureConnectionStart > 0 ? msOf(e.connectEnd - e.secureConnectionStart) : 0) + 'ms');
+  parts.push('応答待ち=' + msOf(e.responseStart - e.requestStart) + 'ms');
+  parts.push('受信=' + msOf(e.responseEnd - e.responseStart) + 'ms');
+  if (e.workerStart > 0) parts.push('SW=あり');
+  if (e.transferSize === 0 && e.decodedBodySize > 0) parts.push('キャッシュ=はい');
+  return parts.join(' ');
+}
+
+/** 1行を残して画面に出す（オフのときは何もしない） */
+function timingPush(text) {
+  if (!timingOn()) return;
+  let lines = [];
+  try { lines = JSON.parse(Store.get('timingLog') || '[]'); } catch (e) { lines = []; }
+  lines.push(clockText() + ' ' + text);
+  Store.set('timingLog', JSON.stringify(lines.slice(-TIMING_MAX)));
+  renderTimingPanel();
+}
+
+function renderTimingPanel() {
+  const on = timingOn();
+  $('#timing-panel').hidden = !on;
+  if (!on) return;
+  let lines = [];
+  try { lines = JSON.parse(Store.get('timingLog') || '[]'); } catch (e) { lines = []; }
+  $('#timing-lines').textContent = lines.length ? lines.join('\n') : '（まだありません。操作するか、アプリを開き直してください）';
+}
+
+/** API の呼び出し1回の時間（サイトで測った往復と、resource timing のその呼び出しの内訳） */
+function timingApi(action, apiMs, perfStart) {
+  if (!timingOn()) return;
+  let detail = ' 内訳=見つからない';
+  try {
+    if (perfStart !== null && perfOk()) {
+      const e = performance.getEntriesByType('resource')
+        .filter((x) => (x.initiatorType === 'fetch' || x.initiatorType === 'other') && x.startTime >= perfStart - 1).pop();
+      if (e) detail = ' 宛先=' + hostOf(e.name) + ' ' + timingDetail(e);
+    }
+  } catch (e) { /* 計測は動作を変えない */ }
+  timingPush((TIMING_NAMES.get(action) || action) + ' 往復=' + apiMs + 'ms' + detail);
+}
+
+/** 起動の時間（最初の画面が出たときに1回。オンにした時点でも1回） */
+function timingBoot() {
+  if (timingBoot.done || !timingOn() || !perfOk()) return;
+  timingBoot.done = true;
+  try {
+    const parts = [];
+    const nav = performance.getEntriesByType('navigation')[0];
+    if (nav) parts.push('ページ(' + hostOf(nav.name) + ') ' + timingDetail(nav));
+    performance.getEntriesByType('resource')
+      .filter((e) => /\.(js|css)$/.test(new URL(e.name, location.href).pathname) && hostOf(e.name) === location.host)
+      .forEach((e) => parts.push(fileOf(e.name) + ' ' + timingDetail(e)));
+    // 最初の画面が出た時刻（boot で覚える）。まだ出ていなければ今の時刻
+    parts.push('最初の画面まで=' + msOf(S.firstScreenAt !== undefined ? S.firstScreenAt : performance.now()) + 'ms');
+    timingPush('起動 ' + parts.join(' / '));
+  } catch (e) { /* 計測は動作を変えない */ }
+}
+
+// 隠しスイッチ: 題名を TIMING_TAP_MS ミリ秒以内に TIMING_TAPS 回押す
+const timingTaps = [];
+$('#app-title').addEventListener('click', () => {
+  const now = Date.now();
+  timingTaps.push(now);
+  while (timingTaps.length && now - timingTaps[0] > TIMING_TAP_MS) timingTaps.shift();
+  if (timingTaps.length < TIMING_TAPS) return;
+  timingTaps.length = 0;
+  const on = !timingOn();
+  Store.set('timingPanel', on ? '1' : '0');
+  renderTimingPanel();
+  if (on) timingBoot(); // 今回の起動の時間も残す
+  toast(on ? '時間の表示をオンにしました（題名を5回押すとオフ）' : '時間の表示をオフにしました');
+});
+$('#timing-close').addEventListener('click', () => { Store.set('timingPanel', '0'); renderTimingPanel(); });
+$('#timing-clear').addEventListener('click', () => { Store.remove('timingLog'); renderTimingPanel(); });
+$('#timing-copy').addEventListener('click', () => {
+  const text = $('#timing-lines').textContent;
+  const clip = typeof navigator !== 'undefined' && navigator.clipboard;
+  if (!clip) { toast('コピーできませんでした。文字を長押しして選んでください。'); return; }
+  clip.writeText(text).then(() => toast('コピーしました'), () => toast('コピーできませんでした。文字を長押しして選んでください。'));
+});
 function toast(msg, ms = 3500) {
   const t = $('#toast');
   t.textContent = msg;
@@ -106,6 +230,7 @@ function closeModal(value) {
 async function call(action, payload, label) {
   spinner(true, label);
   const t0 = Date.now();
+  const perfStart = perfOk() ? performance.now() : null; // 時間の表示で、この呼び出しの resource timing を探すため
   try {
     return await apiCall(action, payload);
   } catch (e) {
@@ -114,6 +239,7 @@ async function call(action, payload, label) {
   } finally {
     S.lastApiMs = Date.now() - t0;
     timingLog(action, { api: S.lastApiMs });
+    timingApi(action, S.lastApiMs, perfStart);
     spinner(false);
   }
 }
@@ -331,7 +457,11 @@ async function doPunch(punchType, label) {
       // 画面の表示の時間: 応答を受けてから結果の画面を出し、ブラウザが描くまで（v1.20）
       const tResp = Date.now();
       const done = punchDone(r); // 結果のモーダルはこの中ですぐ出る（閉じるのを待つ前に計る）
-      const report = () => timingLog('punch-total', { total: Date.now() - tOk, geoWait: ms.geoWait, api: ms.api, render: Date.now() - tResp });
+      const report = () => {
+        const t = { total: Date.now() - tOk, geoWait: ms.geoWait, api: ms.api, render: Date.now() - tResp };
+        timingLog('punch-total', t);
+        timingPush('打刻の全体 全体=' + t.total + 'ms 位置の待ち=' + t.geoWait + 'ms 往復=' + t.api + 'ms 表示=' + t.render + 'ms');
+      };
       if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => setTimeout(report, 0)); else report();
       await done;
       return;
@@ -536,7 +666,13 @@ if ('serviceWorker' in navigator) {
 }
 
 (function boot() {
+  renderTimingPanel(); // 時間の表示がオンなら、前の行を出しておく（§13.6 v1.39）
   if (!(window.KINTAI_CONFIG || {}).apiUrl) { show('setup'); return; }
-  if (!S.token) { startView(); return; }
-  if (S.mode === 'shared') sharedListView(); else loadMe();
+  let ready;
+  if (!S.token) { startView(); ready = Promise.resolve(); } else ready = S.mode === 'shared' ? sharedListView() : loadMe();
+  // 最初の画面が出た時刻を覚え、起動の時間を残す（オフのときは残さない。あとでオンにしたときはこの時刻を使う）
+  Promise.resolve(ready).then(() => {
+    if (perfOk()) S.firstScreenAt = performance.now();
+    timingBoot();
+  }, () => {});
 })();
