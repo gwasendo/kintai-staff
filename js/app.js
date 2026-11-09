@@ -119,18 +119,34 @@ function renderTimingPanel() {
   $('#timing-lines').textContent = lines.length ? lines.join('\n') : '（まだありません。操作するか、アプリを開き直してください）';
 }
 
+/**
+ * 記録できなかった問題の種類だけを返す（例 'TypeError'。§13.6 v1.40）。問題の中身（メッセージ・値）は出さない
+ */
+function errorKind(e) {
+  const n = e && typeof e.name === 'string' ? e.name : '';
+  return /^[A-Za-z]{1,40}$/.test(n) ? n : 'Error';
+}
+
 /** API の呼び出し1回の時間（サイトで測った往復と、resource timing のその呼び出しの内訳） */
 function timingApi(action, apiMs, perfStart) {
-  if (!timingOn()) return;
-  let detail = ' 内訳=見つからない';
+  const name = TIMING_NAMES.get(action) || action;
   try {
-    if (perfStart !== null && perfOk()) {
-      const e = performance.getEntriesByType('resource')
-        .filter((x) => (x.initiatorType === 'fetch' || x.initiatorType === 'other') && x.startTime >= perfStart - 1).pop();
-      if (e) detail = ' 宛先=' + hostOf(e.name) + ' ' + timingDetail(e);
+    if (!timingOn()) return;
+    let detail = ' 内訳=見つからない';
+    try {
+      if (perfStart !== null && perfOk()) {
+        const e = performance.getEntriesByType('resource')
+          .filter((x) => (x.initiatorType === 'fetch' || x.initiatorType === 'other') && x.startTime >= perfStart - 1).pop();
+        if (e) detail = ' 宛先=' + hostOf(e.name) + ' ' + timingDetail(e);
+      }
+    } catch (e) {
+      detail = ' 内訳=記録できない（' + errorKind(e) + '）';
     }
-  } catch (e) { /* 計測は動作を変えない */ }
-  timingPush((TIMING_NAMES.get(action) || action) + ' 往復=' + apiMs + 'ms' + detail);
+    timingPush(name + ' 往復=' + apiMs + 'ms' + detail);
+  } catch (e) {
+    // 行を残せなかった。種類だけをもう一度残してみる（それも失敗したら何もしない。計測は動作を変えない）
+    try { timingPush(name + ' 記録できない（' + errorKind(e) + '）'); } catch (e2) { /* 何もしない */ }
+  }
 }
 
 /** 起動の時間（最初の画面が出たときに1回。オンにした時点でも1回） */
@@ -147,7 +163,10 @@ function timingBoot() {
     // 最初の画面が出た時刻（boot で覚える）。まだ出ていなければ今の時刻
     parts.push('最初の画面まで=' + msOf(S.firstScreenAt !== undefined ? S.firstScreenAt : performance.now()) + 'ms');
     timingPush('起動 ' + parts.join(' / '));
-  } catch (e) { /* 計測は動作を変えない */ }
+  } catch (e) {
+    // 種類だけを残す（§13.6 v1.40。計測は動作を変えない）
+    try { timingPush('起動 記録できない（' + errorKind(e) + '）'); } catch (e2) { /* 何もしない */ }
+  }
 }
 
 // 隠しスイッチ: 題名を TIMING_TAP_MS ミリ秒以内に TIMING_TAPS 回押す

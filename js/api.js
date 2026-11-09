@@ -72,12 +72,29 @@ function newRequestId() {
 }
 
 /**
+ * 位置の許可が「拒否」と分かっているか（§13.6 v1.40）
+ * Permissions API で調べられる端末だけ true になり得る。調べられない・失敗した・未定・許可のときは false（今までどおり取りに行く）
+ * @return {Promise<boolean>}
+ */
+async function geoDenied() {
+  try {
+    if (!navigator.permissions || typeof navigator.permissions.query !== 'function') return false;
+    const st = await navigator.permissions.query({ name: 'geolocation' });
+    return !!st && st.state === 'denied';
+  } catch (e) {
+    return false;
+  }
+}
+
+/**
  * 位置を1回だけ取る（打刻のときだけ。§13.4）。取れなければ null
+ * 許可が拒否と分かる端末では、取得の時間切れ（10秒）を待たずにすぐ null を返す（§13.6 v1.40。iPhone は拒否をすぐ知らせないことがある）
  * @return {Promise<{lat:number, lng:number, accuracy:number}|null>}
  */
-function getPositionOnce() {
+async function getPositionOnce() {
+  if (!navigator.geolocation) return null;
+  if (await geoDenied()) return null;
   return new Promise((resolve) => {
-    if (!navigator.geolocation) { resolve(null); return; }
     navigator.geolocation.getCurrentPosition(
       (p) => resolve({ lat: p.coords.latitude, lng: p.coords.longitude, accuracy: p.coords.accuracy }),
       () => resolve(null),
